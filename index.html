@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Snowball Fight — Снежковая битва</title>
+<style>
+:root{color-scheme:dark;--ice:#bdefff;--blue:#55c9ff;--pink:#ff86bd}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% 0%,#234a73 0,#101a32 55%,#0a1021 100%);color:#f3f9ff;font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:flex;justify-content:center;padding:18px}
+.wrap{width:min(1100px,100%);display:flex;flex-direction:column;gap:12px}
+header{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+h1{font-size:clamp(23px,4vw,36px);margin:0;letter-spacing:.3px;text-shadow:0 3px 18px #54cfff66}
+h1 span{color:#8de4ff}
+.sub{color:#b8cce4;font-size:13px}
+.panel{background:#101d35cc;border:1px solid #a8dfff33;border-radius:18px;padding:14px;box-shadow:0 12px 35px #0005}
+.lobby{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+input{min-width:130px;flex:1;background:#091326;border:1px solid #6c9cbd66;border-radius:12px;padding:12px;color:white;font-size:16px;text-transform:uppercase;letter-spacing:3px}
+button{border:0;border-radius:12px;padding:12px 16px;font-weight:800;color:#092037;background:linear-gradient(135deg,#b8f0ff,#55c9ff);cursor:pointer;box-shadow:0 4px 0 #237da9;transition:transform .12s,filter .12s}
+button:active{transform:translateY(3px);box-shadow:0 1px 0 #237da9}
+button.secondary{background:linear-gradient(135deg,#ffd2e7,#ff86bd);box-shadow:0 4px 0 #a94f7b}
+button:disabled{opacity:.45;cursor:not-allowed}
+.status{color:#c9e4f5;font-size:14px;min-height:20px}
+.roomline{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.code{font-weight:900;letter-spacing:5px;font-size:22px;color:#a5edff}
+canvas{width:100%;aspect-ratio:16/9;display:block;border-radius:18px;border:1px solid #b9eaff55;background:#b9e8fa;box-shadow:0 18px 55px #0007;touch-action:none}
+.hud{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap}
+.score{display:flex;gap:10px;align-items:center;font-weight:800}
+.pips{display:flex;gap:4px}
+.pip{width:13px;height:13px;border-radius:50%;background:#f5fbff55;border:1px solid #fff8}
+.pip.filled{background:#ff719d;box-shadow:0 0 10px #ff719d}
+.help{font-size:13px;color:#b9cde2;line-height:1.5}
+.controls{display:none;grid-template-columns:repeat(3,1fr);gap:7px;max-width:370px;margin:auto;width:100%}
+.controls button{padding:14px 8px;touch-action:none;user-select:none}
+.controls .empty{visibility:hidden}
+.controls .actions{display:flex;gap:7px;grid-column:1/-1}
+.controls .actions button{flex:1}
+@media(max-width:700px){body{padding:10px}.controls{display:grid}.help{font-size:12px}.panel{padding:11px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header><div><h1>❄️ SNOWBALL <span>FIGHT</span></h1><div class="sub">Два игрока · пять попаданий — победа · реванш обязателен</div></div><div class="sub">Зимняя арена онлайн</div></header>
+<section class="panel">
+  <div class="lobby" id="lobby">
+    <button id="create">Создать комнату</button>
+    <input id="roomInput" maxlength="5" placeholder="КОД">
+    <button class="secondary" id="join">Войти к другу</button>
+  </div>
+  <div class="roomline" id="roomLine" hidden>
+    <div>Код комнаты: <span class="code" id="roomCode">-----</span> <span class="sub">— отправь другу</span></div>
+    <button id="copy" class="secondary">Копировать код</button>
+  </div>
+  <div class="status" id="status">Создай комнату и отправь код другу. Он откроет эту же ссылку и введёт код.</div>
+</section>
+<div class="hud panel">
+  <div class="score"><span>🔵 Ты</span><div class="pips" id="myPips"></div></div>
+  <div id="roundStatus" class="sub">Ждём игроков…</div>
+  <div class="score"><div class="pips" id="enemyPips"></div><span>🔴 Соперник</span></div>
+</div>
+<canvas id="game" width="960" height="540"></canvas>
+<div class="panel" id="rematchPanel" hidden style="text-align:center"><button class="secondary" id="rematch">🔁 РЕВАНШ!</button></div>
+<div class="controls" id="mobileControls">
+  <span class="empty"></span><button data-key="up">▲</button><span class="empty"></span>
+  <button data-key="left">◀</button><button data-key="down">▼</button><button data-key="right">▶</button>
+  <div class="actions"><button data-key="throw">❄️ БРОСОК</button><button data-key="cover" class="secondary">🛡 УКРЫТЬСЯ</button></div>
+</div>
+<section class="panel help">
+  <b>Управление:</b> WASD или стрелки — двигаться · F или Enter — бросить снежок · Space или Shift — укрыться.
+  На телефоне используй кнопки под ареной. Укрытие блокирует попадание, но замедляет тебя.
+</section>
+</div>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+const $ = id => document.getElementById(id);
+const canvas = $("game"), ctx = canvas.getContext("2d");
+let myId=null, mySide=0, roomCode="", state=null, connected=false;
+const keys={left:false,right:false,up:false,down:false,throw:false,cover:false};
+let particles=[], floating=[], lastStateAt=0;
+const W=960,H=540;
+
+function setStatus(t){$("status").textContent=t}
+function showRoom(code){roomCode=code;$("roomCode").textContent=code;$("roomLine").hidden=false;$("lobby").hidden=true}
+$("create").onclick=()=>{if(!connected)return setStatus("Подключаемся к серверу…");socket.emit("createRoom");setStatus("Создаём комнату…")};
+$("join").onclick=()=>{const c=$("roomInput").value.trim();if(c.length<4)return setStatus("Введи код комнаты.");socket.emit("joinRoom",c);setStatus("Ищем комнату…")};
+$("rematch").onclick=()=>socket.emit("rematch");
+$("copy").onclick=async()=>{try{await navigator.clipboard.writeText(roomCode);setStatus("Код скопирован! Отправь его другу.");}catch(e){setStatus("Код комнаты: "+roomCode)}};
+socket.on("connect",()=>{connected=true;setStatus("Сервер на связи. Создай комнату или введи код друга.")});
+socket.on("disconnect",()=>{connected=false;setStatus("Связь потеряна. Обнови страницу, когда интернет вернётся.")});
+socket.on("roomJoined",d=>{myId=d.playerId;mySide=d.side;showRoom(d.code);setStatus(mySide===1?"Ты создал комнату. Ждём друга…":"Ты в игре! Удачи.");});
+socket.on("joinError",m=>setStatus(m));
+socket.on("opponentLeft",()=>setStatus("Соперник вышел из комнаты."));
+socket.on("state",s=>{state=s;lastStateAt=performance.now();updateHud();$("rematchPanel").hidden=!s.gameOver;if(s.started)setStatus("Бой начался! Первым получивший 5 попаданий проигрывает.");});
+socket.on("hit",d=>{burst(d.x,d.y,"hit");floating.push({x:d.x,y:d.y-45,t:performance.now(),text:"ПОПАДАНИЕ!"})});
+socket.on("blocked",d=>{burst(d.x,d.y,"block");floating.push({x:d.x,y:d.y-38,t:performance.now(),text:"БЛОК!"})});
+$("roundStatus").textContent="Ждём игроков…";
+function updateHud(){
+ if(!state)return;
+ const me=state.players.find(p=>p.id===myId), enemy=state.players.find(p=>p.id!==myId);
+ drawPips($("myPips"),me?me.hits:0);drawPips($("enemyPips"),enemy?enemy.hits:0);
+ if(!state.started)$("roundStatus").textContent="Ждём второго игрока…";
+ else if(state.gameOver)$("roundStatus").textContent=state.winner===myId?"🏆 ПОБЕДА!":"💥 ТЫ ПРОИГРАЛ";
+ else $("roundStatus").textContent="В бою!";
+}
+function drawPips(el,n){el.innerHTML="";for(let i=0;i<5;i++){const d=document.createElement("i");d.className="pip"+(i<n?" filled":"");el.appendChild(d)}}
+function burst(x,y,type){for(let i=0;i<18;i++){const a=Math.random()*Math.PI*2,s=70+Math.random()*220;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-60,life:.65,max:.65,type})}}
+function rounded(x,y,w,h,r){ctx.beginPath();ctx.roundRect(x,y,w,h,r)}
+function drawBackground(t){
+ const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,"#a9e5fb");g.addColorStop(1,"#e8faff");ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+ // distant mountains
+ ctx.fillStyle="#d4f2fc";ctx.beginPath();ctx.moveTo(0,220);ctx.lineTo(125,105);ctx.lineTo(245,220);ctx.lineTo(390,95);ctx.lineTo(555,225);ctx.lineTo(735,100);ctx.lineTo(960,230);ctx.lineTo(960,540);ctx.lineTo(0,540);ctx.fill();
+ ctx.fillStyle="#f8fdff";ctx.beginPath();ctx.moveTo(0,250);ctx.quadraticCurveTo(250,205,480,255);ctx.quadraticCurveTo(700,300,960,230);ctx.lineTo(960,540);ctx.lineTo(0,540);ctx.fill();
+ // tree silhouettes
+ for(let i=0;i<12;i++){let x=(i*97+25)%W,y=190+(i%3)*26;ctx.fillStyle="#6daeb0";ctx.beginPath();ctx.moveTo(x,y-55);ctx.lineTo(x-27,y+18);ctx.lineTo(x+27,y+18);ctx.fill();ctx.fillStyle="#477f89";ctx.fillRect(x-4,y+15,8,25)}
+ // arena shadows and snow mounds
+ ctx.fillStyle="#b1dce9";ctx.beginPath();ctx.ellipse(480,470,420,38,0,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle="#fff";ctx.beginPath();ctx.ellipse(480,457,420,34,0,0,Math.PI*2);ctx.fill();
+ // snow forts / cover objects
+ drawFort(305,385);drawFort(655,385);
+ // drifting snow
+ for(let i=0;i<35;i++){let x=(i*137+t*.018)%W,y=(i*71+t*.009)%H;ctx.globalAlpha=.35;ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(x,y,1.5+(i%3),0,Math.PI*2);ctx.fill()}ctx.globalAlpha=1;
+}
+function drawFort(x,y){
+ ctx.fillStyle="#8ec7d8";rounded(x-55,y-18,110,46,12);ctx.fill();
+ ctx.fillStyle="#f7fdff";rounded(x-58,y-25,116,27,12);ctx.fill();
+ ctx.fillStyle="#c6eaf4";rounded(x-43,y-5,86,22,8);ctx.fill();
+}
+function drawPlayer(p,t){
+ const left=p.side===1, x=p.x, y=p.y, isMe=p.id===myId;
+ const throwAnim=t-p.throwAt<260, bob=Math.sin(t/170+(left?0:2))*2;
+ ctx.save();ctx.translate(x,y+bob);
+ // shadow
+ ctx.fillStyle="#4b879b44";ctx.beginPath();ctx.ellipse(0,24,31,9,0,0,Math.PI*2);ctx.fill();
+ // legs
+ ctx.strokeStyle="#263e5c";ctx.lineWidth=10;ctx.lineCap="round";
+ ctx.beginPath();ctx.moveTo(-10,9);ctx.lineTo(-13,23);ctx.moveTo(10,9);ctx.lineTo(13,23);ctx.stroke();
+ // boots
+ ctx.strokeStyle="#24334c";ctx.lineWidth=9;ctx.beginPath();ctx.moveTo(-17,23);ctx.lineTo(-7,23);ctx.moveTo(8,23);ctx.lineTo(18,23);ctx.stroke();
+ // body jacket
+ const jacket=left?"#318ed0":"#df547d";
+ ctx.fillStyle=jacket;rounded(-20,-22,40,37,13);ctx.fill();
+ ctx.fillStyle=left?"#8de5ff":"#ffb0ca";rounded(-17,-19,34,9,5);ctx.fill();
+ // scarf trailing
+ ctx.fillStyle=left?"#ffe08b":"#9ff0df";rounded(left?-25:5,-15,20,7,4);ctx.fill();ctx.fillRect(left?-25:12,-13,7,18);
+ // arms, throw arm swings forward
+ ctx.strokeStyle=jacket;ctx.lineWidth=10;ctx.lineCap="round";ctx.beginPath();
+ if(throwAnim){ctx.moveTo(left?14:-14,-13);ctx.lineTo(left?29:-29,-23)}
+ else {ctx.moveTo(-15,-12);ctx.lineTo(-25,1);ctx.moveTo(15,-12);ctx.lineTo(25,1)}
+ ctx.stroke();
+ // head
+ ctx.fillStyle="#f4c7a6";ctx.beginPath();ctx.arc(0,-34,17,0,Math.PI*2);ctx.fill();
+ // hair
+ ctx.fillStyle=left?"#493b39":"#4a2f3c";ctx.beginPath();ctx.arc(0,-40,17,Math.PI,Math.PI*2);ctx.fill();
+ // hat
+ ctx.fillStyle=left?"#2879b5":"#bd4268";rounded(-19,-52,38,12,6);ctx.fill();ctx.beginPath();ctx.arc(0,-54,6,0,Math.PI*2);ctx.fill();
+ // face direction
+ ctx.fillStyle="#26344b";ctx.beginPath();ctx.arc(left?6:-6,-34,2,0,Math.PI*2);ctx.fill();
+ ctx.strokeStyle="#a45f59";ctx.lineWidth=1.8;ctx.beginPath();ctx.arc(left?4:-4,-27,4,.15,Math.PI-.15);ctx.stroke();
+ // held snowball
+ if(throwAnim){ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(left?33:-33,-25,7,0,Math.PI*2);ctx.fill()}
+ // cover shield
+ if(p.cover){ctx.strokeStyle="#67dfff";ctx.lineWidth=5;ctx.globalAlpha=.85;ctx.beginPath();ctx.arc(0,-12,39,Math.PI,Math.PI*2);ctx.stroke();ctx.fillStyle="#8eeaff22";ctx.beginPath();ctx.arc(0,-12,39,Math.PI,Math.PI*2);ctx.fill()}
+ // little player label
+ ctx.globalAlpha=1;ctx.fillStyle=isMe?"#126b9d":"#a52e57";rounded(-25,35,50,16,7);ctx.fill();ctx.fillStyle="#fff";ctx.font="bold 10px system-ui";ctx.textAlign="center";ctx.fillText(isMe?"ТЫ":"ДРУГ",0,46);
+ ctx.restore();
+}
+function render(t){
+ drawBackground(t);
+ if(state){
+  for(const b of state.balls){ctx.save();ctx.shadowColor="#4acaff";ctx.shadowBlur=14;ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(b.x,b.y,9,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#a8eaff";ctx.lineWidth=2;ctx.stroke();ctx.restore()}
+  state.players.slice().sort((a,b)=>a.y-b.y).forEach(p=>drawPlayer(p,t));
+  if(state.gameOver){ctx.fillStyle="#0b1c35aa";ctx.fillRect(0,0,W,H);ctx.fillStyle="#fff";ctx.textAlign="center";ctx.font="900 46px system-ui";ctx.fillText(state.winner===myId?"ПОБЕДА!":"РЕВАНШ?",W/2,H/2-8);ctx.font="bold 19px system-ui";ctx.fillText("Нажми «Реванш» ниже или создай новую комнату",W/2,H/2+30)}
+ }
+ particles=particles.filter(p=>t-p.start<700 || p.start===undefined);
+ for(const p of particles){if(p.start===undefined)p.start=t;const age=(t-p.start)/700;ctx.globalAlpha=1-age;ctx.fillStyle=p.type==="hit"?"#ff719d":"#66dfff";ctx.beginPath();ctx.arc(p.x+p.vx*age*.7,p.y+p.vy*age*.7+90*age*age,4*(1-age)+1,0,Math.PI*2);ctx.fill()}ctx.globalAlpha=1;
+ floating=floating.filter(f=>t-f.t<850);for(const f of floating){ctx.globalAlpha=1-(t-f.t)/850;ctx.fillStyle="#fff";ctx.font="900 18px system-ui";ctx.textAlign="center";ctx.shadowColor="#1a6e9b";ctx.shadowBlur=8;ctx.fillText(f.text,f.x,f.y-(t-f.t)*.035);ctx.shadowBlur=0}ctx.globalAlpha=1;
+ requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+function sendInput(){if(socket.connected && myId)socket.emit("input",keys)}
+setInterval(sendInput,45);
+window.addEventListener("keydown",e=>{
+ const k=e.key.toLowerCase();
+ if(["arrowup","arrowdown","arrowleft","arrowright"," "].includes(k))e.preventDefault();
+ if(k==="a"||k==="arrowleft")keys.left=true;
+ if(k==="d"||k==="arrowright")keys.right=true;
+ if(k==="w"||k==="arrowup")keys.up=true;
+ if(k==="s"||k==="arrowdown")keys.down=true;
+ if(k==="f"||k==="enter")keys.throw=true;
+ if(k===" "||k==="shift")keys.cover=true;
+});
+window.addEventListener("keyup",e=>{
+ const k=e.key.toLowerCase();
+ if(k==="a"||k==="arrowleft")keys.left=false;
+ if(k==="d"||k==="arrowright")keys.right=false;
+ if(k==="w"||k==="arrowup")keys.up=false;
+ if(k==="s"||k==="arrowdown")keys.down=false;
+ if(k==="f"||k==="enter")keys.throw=false;
+ if(k===" "||k==="shift")keys.cover=false;
+});
+document.querySelectorAll("[data-key]").forEach(btn=>{
+ const k=btn.dataset.key;
+ const down=e=>{e.preventDefault();keys[k]=true;btn.setPointerCapture?.(e.pointerId)};
+ const up=e=>{e.preventDefault();keys[k]=false};
+ btn.addEventListener("pointerdown",down);btn.addEventListener("pointerup",up);
+ btn.addEventListener("pointercancel",up);btn.addEventListener("lostpointercapture",up);
+});
+</script>
+</body>
+</html>
